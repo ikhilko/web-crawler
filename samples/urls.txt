@@ -1,1 +1,3 @@
 http://learnxinyminutes.com/
+
+http://habrahabr.com/
