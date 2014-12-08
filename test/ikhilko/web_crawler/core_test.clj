@@ -1,6 +1,6 @@
-(ns web-crawler.core-test
+(ns ikhilko.web-crawler.core-test
   (:require [clojure.test :refer :all]
-            [web-crawler.core :refer :all]))
+            [ikhilko.web-crawler.core :refer :all]))
 
 (deftest a-test
   (testing "FIXME, I fail."
