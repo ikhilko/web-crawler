@@ -1,6 +1,5 @@
 (ns ikhilko.web-crawler.core
-  (:import (org.apache.http.conn ConnectTimeoutException)
-           (java.util UUID))
+  (:import (org.apache.http.conn ConnectTimeoutException))
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clj-http.client :as client]
@@ -15,20 +14,39 @@
 
 
 ; ------------------  TREE -------------------
-
-(defn uid [] (str (UUID/randomUUID)))
-
 (defn- create-tree-node
   ([urls depth]
-    (create-tree-node (uid) nil urls depth "root" {}))
-  ([id parent urls depth url additional]
-    {:id         id,
-     :parent     parent,
+    (create-tree-node nil urls depth "root" { :state "root" }))
+  ([parent urls depth url additional]
+    {:parent     parent,
      :urls       urls,
      :depth      depth,
      :url        url,
      :additional additional,
      :children   (atom ())}))
+
+(defn- generate-indent
+  [level]
+  (str/join "" (take level (repeat "   "))))
+
+(defn- print-node
+  [node level]
+  (let [indent (generate-indent level)
+        additional (:additional node)
+        state (:state additional)
+        message (case state
+                  "ok" (str "links: " (count (:urls node)))
+                  "redirect" (str "redirect to (" (:location additional) ")")
+                  "bad" (str "bad (" (:status additional) ")")
+                  "visited" "already visited"
+                  "another-host" "link to another host"
+                  "root" "root")]
+    (println indent (:url node) message)))
+
+(defn- print-tree
+  [root level]
+  (print-node root level)
+  (doseq [child @(:children root)] (print-tree child (inc level))))
 
 ; ------------------ / TREE -------------------
 
@@ -41,13 +59,15 @@
 (def ^:private white-statuses #{200 201 202 203 204 205 206 207 300})
 (def ^:private redir-statuses #{301 302 303 307})
 
+(def ^:private visited-urls (atom #{}))
+
 
 (defn- get-status-description
   [raw-response]
   (let [status (:status raw-response)]
     (cond
       (contains? white-statuses status) {:state "ok", :status status}
-      (contains? redir-statuses status) (:state "redirect", :location (:location (:headers raw-response)),, :status status)
+      (contains? redir-statuses status) {:state "redirect", :location (:location (:headers raw-response)), :status status}
       :else {:state "bad", :status status})))
 
 ; get page (or 408/500 bad codes)
@@ -60,7 +80,7 @@
 (defn- resolve-url
   [base-url href]
   (let [uri-href (url/url-like href)]
-    (->> (if (url/relative? uri-href)
+    (->> (if (not (url/absolute? uri-href))
            (url/resolve (url/url-like base-url) uri-href)
            uri-href)
          (.toString))))
@@ -69,7 +89,7 @@
   [href]
   (cond
     (nil? href) nil
-    (nil? (re-find (re-matcher #"mailto" href))) href
+    (nil? (re-find (re-matcher #"^((javascript|mailto|callto):|#)" href))) href
     :else nil))
 
 (defn- parse-page-links
@@ -78,20 +98,31 @@
       (html/select #{[:a]})
       (->> (reduce (fn [memo link]
                      (let [href (prepare-href (:href (:attrs link)))]
-                       (if (some? href)
+                       (if (not (nil? href))
                          (conj memo (resolve-url base-url href)))))
                    []))))
 
+(defn- changed-host?
+  [url parent-url]
+  (let [host (-> (url/url-like url) (.getHost))
+        parent-host (-> (url/url-like parent-url) (.getHost))]
+    (println host parent-host)
+    (and (not= parent-host "root") (not= host parent-host))))
+
 (defn- process-url
-  [url]
-  (let [raw-response (fetch-page-by-url url)
-        status-desctiption (get-status-description raw-response)
-        state (:state status-desctiption)
-        urls (case state
-               "ok" (parse-page-links url (:body raw-response))
-               "redirect" [(resolve-url url (:location status-desctiption))]
-               "bad" [])]
-    {:urls urls, :additional status-desctiption}))
+  [url parent-url]
+  (cond
+    (contains? @visited-urls url) {:urls [], :additional {:state "visited"}}
+    (changed-host? url parent-url) {:urls [], :additional {:state "another-host"}}
+    :else (do (swap! visited-urls conj url)
+              (let [raw-response (fetch-page-by-url url)
+                    status-desctiption (get-status-description raw-response)
+                    state (:state status-desctiption)
+                    urls (case state
+                           "ok" (parse-page-links url (:body raw-response))
+                           "redirect" [(resolve-url url (:location status-desctiption))]
+                           "bad" [])]
+                {:urls urls, :additional status-desctiption}))))
 
 (defn- process-node
   ([urls depth]
@@ -99,19 +130,19 @@
   ([parent]
     (let [current-depth (:depth parent)
           next-depth (dec current-depth)
-          urls (:urls parent)]
-      (println "Process " (:depth parent) "url" (:url parent) ", cond:" (<= current-depth 1))
+          urls (:urls parent)
+          parent-url (:url parent)]
       (if (<= current-depth 1)
         parent
-        (doseq [child-node (map (fn [url]
-                                   (let [processed (process-url url)
-                                         id (uid)
-                                         urls (:urls processed)
-                                         node (create-tree-node id parent urls next-depth url processed)]
-                                     (swap! (:children parent) conj node)
-                                     node))
-                                 urls)]
-          (process-node child-node))))))
+        (do (doseq [child-node (map (fn [url]
+                                      (let [processed (process-url url parent-url)
+                                            urls (:urls processed)
+                                            node (create-tree-node parent urls next-depth url (:additional processed))]
+                                        (swap! (:children parent) conj node)
+                                        node))
+                                    urls)]
+              (process-node child-node))
+            parent)))))
 
 ; ------------------ / CORE -------------------
 
@@ -165,6 +196,6 @@
          (println "Depth: " depth)
          (let [urls (file->urls file-path)
                tree (process-node urls depth)]
-           (println tree)))
+           (print-tree tree 0)))
        (catch IllegalArgumentException e (->> e (.getMessage) (println "Invalid argument:")))
        (finally (shutdown-agents))))
