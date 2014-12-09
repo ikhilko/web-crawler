@@ -139,7 +139,7 @@
           parent-url (:url parent)]
       (if (<= current-depth 1)
         parent
-        (do (doseq [child-node (map (fn [url]
+        (do (doseq [child-node (pmap (fn [url]
                                       (let [processed (process-url url parent-url)
                                             urls (:urls processed)
                                             node (create-tree-node parent urls next-depth url (:additional processed))]
