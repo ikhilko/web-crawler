@@ -106,7 +106,6 @@
   [url parent-url]
   (let [host (-> (url/url-like url) (.getHost))
         parent-host (-> (url/url-like parent-url) (.getHost))]
-    (println host parent-host)
     (and (not= parent-host "root") (not= host parent-host))))
 
 (defn- process-url

@@ -1,14 +1,20 @@
-# web-crawler
+## Before start
 
-A Clojure library designed to ... well, that part is up to you.
+    Prepare file with urls
+
+    e.g.
+
+    http://someurl.com/
+    http://anotherurl.com/
 
 ## Usage
 
-FIXME
+    $> lein run <path-to-file> <depth>
 
-## License
+    e.g.
 
-Copyright © 2014 FIXME
+    $> lein run "./samples/urls.txt" 3
 
-Distributed under the Eclipse Public License either version 1.0 or (at
-your option) any later version.
+## Specs
+
+    $> lein test
