@@ -1,5 +1,6 @@
 (ns ikhilko.web-crawler.core
-  (:import (org.apache.http.conn ConnectTimeoutException))
+  (:import (org.apache.http.conn ConnectTimeoutException)
+           (java.net UnknownHostException))
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clj-http.client :as client]
@@ -70,12 +71,17 @@
       (contains? redir-statuses status) {:state "redirect", :location (:location (:headers raw-response)), :status status}
       :else {:state "bad", :status status})))
 
+(defn- get-request
+  [url]
+  (client/get url http-request-options))
+
 ; get page (or 408/500 bad codes)
 (defn- fetch-page-by-url
   [url]
-  (try (client/get url http-request-options)
-       (catch ConnectTimeoutException e {:status 408})
-       (catch Exception e {:status 500})))
+  (try (get-request url)
+       (catch ConnectTimeoutException e { :status 408 })
+       (catch UnknownHostException e { :status 404 })
+       (catch Exception e { :status 500 })))
 
 (defn- resolve-url
   [base-url href]
